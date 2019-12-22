@@ -1,0 +1,7 @@
+.credentials.json
+.vscode
+__pycache__
+venv
+google_drive_credentials.json
+google_drive_token.pickle
+*.swp
