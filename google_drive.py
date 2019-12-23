@@ -50,11 +50,10 @@ def get_venmo_code(since_time):
     if not items:
         print('No files found.')
     else:
-        print('Files:')
         for item in items:
             if 'lastsms' in item['name']:
                 lastsms_file_id = item['id']
-                print(u'{0} ({1})'.format(item['name'], item['id']))
+                # print(u'{0} ({1})'.format(item['name'], item['id']))
     if lastsms_file_id == None:
         print("lastsms file not found (I didn't look very hard)")
         return None
