@@ -7,9 +7,9 @@ import time
 import argparse
 from pprint import pprint
 from pymongo import MongoClient, UpdateOne, InsertOne
+from pymongo.errors import CursorNotFound
 from urllib.parse import urlencode, urlparse, parse_qs
 from google_drive import get_venmo_code
-from helpers import normalize_transaction
 
 CREDENTIALS_FILE = "venmo_credentials.json"
 AUTH_URL = "https://api.venmo.com/v1/oauth/authorize"
@@ -139,62 +139,61 @@ class Crawler:
 
         print("Crawing uncrawled users:")
         uncrawled_users = self.db.crawler.find(filt).batch_size(3)
-        for user in uncrawled_users:
-            time.sleep(1)
-            print(f"{user['display_name']} ({user['username']},",
-                  end='',
-                  flush=True)
+        try:
+            for user in uncrawled_users:
+                time.sleep(1)
+                print(f"{user['display_name']} ({user['username']},",
+                    end='',
+                    flush=True)
 
-            if 'venmo_id' in user and user['venmo_id'] != None and len(
-                    user['venmo_id']) == 8:
-                uid = user['venmo_id']
-            else:
-                uid = self.v.get_user_id_from_username(user['username'])
-                if uid == None:
-                    print("Couldn't find uid, marking as uncrawlable")
+                if 'venmo_id' in user and user['venmo_id'] != None and len(
+                        user['venmo_id']) == 8:
+                    uid = user['venmo_id']
+                else:
+                    uid = self.v.get_user_id_from_username(user['username'])
+                    if uid == None:
+                        print("Couldn't find uid, marking as uncrawlable")
+                        self.db.crawler.update_one(user,
+                                                {'$set': {
+                                                    'crawlable': False
+                                                }})
+
+                        continue
+                    self.db.crawler.update_one(user, {'$set': {'venmo_id': uid}})
+                print(f"{uid}): ", end='', flush=True)
+                feed = self.v.get_user_feed(uid)
+                if feed == None:
+                    print("User feed was none")
+                if len(feed['data']) == 0:
+                    print("No data, marking as uncrawlable")
                     self.db.crawler.update_one(user,
-                                               {'$set': {
-                                                   'crawlable': False
-                                               }})
-
+                                            {'$set': {
+                                                'crawlable': False
+                                            }})
                     continue
-                self.db.crawler.update_one(user, {'$set': {'venmo_id': uid}})
-            print(f"{uid}): ", end='', flush=True)
-            feed = self.v.get_user_feed(uid)
-            if feed == None:
-                print("User feed was none")
-            if len(feed['data']) == 0:
-                print("No data, marking as uncrawlable")
-                self.db.crawler.update_one(user,
-                                           {'$set': {
-                                               'crawlable': False
-                                           }})
-                continue
 
-            res = self.db.crawler.update_one(
-                user, {'$set': {
-                    'last_crawled': time.time()
-                }})
-            while feed != None and len(feed['data']) > 0:
-                updates = [
-                    UpdateOne(transaction, {'$set': transaction}, upsert=True)
-                    for transaction in feed['data']
-                ]
-                result = self.db.transactions.bulk_write(updates)
-                if result.bulk_api_result['nUpserted'] == 0:
-                    print("Already seen these transactions",
-                          end='',
-                          flush=True)
-                    break
-                print(f" +{result.bulk_api_result['nUpserted']}",
-                      end='',
-                      flush=True)
-                if feed['paging']['next'] == None:
-                    print("No next page", end='', flush=True)
-                    break
-                feed = self.v.get_user_feed(uid, _next=feed['paging']['next'])
-                time.sleep(5)
-            print(".")
+                res = self.db.crawler.update_one(
+                    user, {'$set': {
+                        'last_crawled': time.time()
+                    }})
+                while feed != None and len(feed['data']) > 0:
+                    result = self.upsert_transaction_feed(feed)
+                    if result.bulk_api_result['nUpserted'] == 0:
+                        print("Already seen these transactions",
+                            end='',
+                            flush=True)
+                        break
+                    print(f" +{result.bulk_api_result['nUpserted']}",
+                        end='',
+                        flush=True)
+                    if feed['paging']['next'] == None:
+                        print("No next page", end='', flush=True)
+                        break
+                    feed = self.v.get_user_feed(uid, _next=feed['paging']['next'])
+                    time.sleep(5)
+                print(".")
+        except CursorNotFound:
+            self.crawl_uncrawled_users()
 
 
 class Venmo:
