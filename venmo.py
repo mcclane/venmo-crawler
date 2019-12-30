@@ -220,7 +220,10 @@ class Crawler:
                     time.sleep(5)
                 print(".")
         except CursorNotFound:
-            self.crawl_uncrawled_users(limit=limit - n)
+            if limit != None:
+                self.crawl_uncrawled_users(limit=limit - n)
+            else:
+                self.crawl_uncrawled_users()
 
 
 class Venmo:
@@ -269,6 +272,7 @@ class Venmo:
                                      allow_redirects=False)
         redirect_url = something.headers['location']
         response = self.client.get(redirect_url)
+        print(response.content)
         secret = re.search('"secret":"(\w*)"', str(response.content)).group(1)
         response = self.client.post(TWO_FACTOR_URL,
                                     headers={'Venmo-Otp-Secret': secret},
