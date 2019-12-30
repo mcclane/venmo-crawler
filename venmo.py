@@ -8,10 +8,11 @@ import argparse
 from pprint import pprint
 from pymongo import MongoClient, UpdateOne, InsertOne
 from pymongo.errors import CursorNotFound
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode, urlparse, parse_qs, quote_plus
 from google_drive import get_venmo_code
 
 CREDENTIALS_FILE = "venmo_credentials.json"
+MONGO_URI_FILE = ".mongo_uri_file.txt"
 AUTH_URL = "https://api.venmo.com/v1/oauth/authorize"
 TWO_FACTOR_URL = "https://venmo.com/api/v5/two_factor/token"
 TWO_FACTOR_AUTHORIZATION_URL = 'https://venmo.com/login'
@@ -26,31 +27,53 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--username', '--u', type=str)
     parser.add_argument('--password', '--p', type=str)
+    parser.add_argument('--dbu', type=str)
+    parser.add_argument('--dbp', type=str)
+    parser.add_argument('--dbport', type=str)
     parser.add_argument('--scrape-friends', '--sf', action='store_true')
     parser.add_argument('--before', '--b', type=str)
     parser.add_argument('--crawl-uncrawled', '--cu', action='store_true')
     parser.add_argument('--update-crawler-list', '--ucl', action='store_true')
+    parser.add_argument('--limit', '--l', type=int)
     args = parser.parse_args()
 
-    c = Crawler(args.username, args.password, CREDENTIALS_FILE)
+    c = Crawler(args.username, args.password, CREDENTIALS_FILE, dbp=args.dbp, dbu=args.dbu, dbport=args.dbport)
     if args.scrape_friends:
         c.scrape_friends_feed()
     if args.update_crawler_list:
         c.update_crawler_list_from_transactions()
     if args.crawl_uncrawled:
-        c.crawl_uncrawled_users()
+        c.crawl_uncrawled_users(limit=args.limit)
 
 
 class Crawler:
-    def __init__(self, username=None, password=None, credentials_file=None):
+    def __init__(self, username=None, password=None, credentials_file=None, dbu=None, dbp=None, dbport=None):
         self.username = username
         self.password = password
         self.credentials_file = credentials_file
+        self.mongo_uri_file = MONGO_URI_FILE
+        if self.load_mongo_uri() == None:
+            self.mongo_uri = f"mongodb://{quote_plus(dbu)}:{quote_plus(dbp)}@127.0.0.1:{dbport}/?authSource=venmo"
+            self.save_mongo_uri()
+        else:
+            print("Using saved mongo uri", self.mongo_uri)
 
         self.v = Venmo(self.username, self.password, self.credentials_file)
 
-        mdb_client = MongoClient("mongodb://127.0.0.1:27017")
-        self.db = mdb_client.venmo
+        mdb_client = MongoClient(self.mongo_uri)
+
+        self.db = mdb_client['venmo']
+
+    def save_mongo_uri(self):
+        with open(self.mongo_uri_file, 'w') as f:
+            f.write(self.mongo_uri)
+    
+    def load_mongo_uri(self):
+        if not os.path.exists(self.mongo_uri_file):
+            return None
+        with open(self.mongo_uri_file, 'r') as f:
+            self.mongo_uri = f.read()
+            return self.mongo_uri
 
     def upsert_transaction_feed(self, feed):
         if not 'data' in feed:
@@ -124,7 +147,7 @@ class Crawler:
         result = self.db.crawler.bulk_write(bulk_write)
         print(result.bulk_api_result['nUpserted'])
 
-    def crawl_uncrawled_users(self):
+    def crawl_uncrawled_users(self, limit=None):
         filt = {
             'last_crawled': {
                 '$exists': False
@@ -139,8 +162,12 @@ class Crawler:
 
         print("Crawing uncrawled users:")
         uncrawled_users = self.db.crawler.find(filt).batch_size(3)
+        n = 0
         try:
             for user in uncrawled_users:
+                if limit != None and n >= limit:
+                    break
+                n += 1
                 time.sleep(1)
                 print(f"{user['display_name']} ({user['username']},",
                     end='',
@@ -193,7 +220,7 @@ class Crawler:
                     time.sleep(5)
                 print(".")
         except CursorNotFound:
-            self.crawl_uncrawled_users()
+            self.crawl_uncrawled_users(limit=limit - n)
 
 
 class Venmo:
