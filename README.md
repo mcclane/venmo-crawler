@@ -1,4 +1,4 @@
-Crawls user feeds and puts the transactions into a mongodb database. Has scraped >250,000 transactions so far.
+Crawls user feeds and puts the transactions into a mongodb database. Used to scrape 1 million transactions so far.
 
 ## Requirements
 python3
